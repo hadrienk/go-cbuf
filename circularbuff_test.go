@@ -62,14 +62,14 @@ func Test_WriterSimpleWraps(t *testing.T) {
 	val := []byte("0123456789")
 	n, _ = cb.Write(val)
 
-	if n != len(val) {
+	if n != len(cb.buf) {
 		t.Errorf("Could't write all bytes. %d writen, wanted %d", n, len(val))
 	}
 
 	n, _ = r.Read(buf)
 
-	if string(buf[:n]) != "23456789" { //string(val[len(val)-n:]) {
-		t.Errorf("Buffer received %q, wanted %q", string(buf), "23456789")
+	if string(buf[:n]) != "01234567" { //string(val[len(val)-n:]) {
+		t.Errorf("Buffer received %q, wanted %q", string(buf), "01234567")
 	}
 
 }

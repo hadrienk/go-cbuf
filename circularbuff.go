@@ -5,9 +5,12 @@ package circularbuff
 // is inserted into the buffer, readers can read it until the buffer wraps
 // around.
 
-import "sync"
-import "runtime"
-import "log"
+import (
+	"container/list"
+	"errors"
+	"runtime"
+	"sync"
+)
 
 const (
 	defaultBufSize = 4096
@@ -17,13 +20,15 @@ type circularBuffer struct {
 	err  error
 	buf  []byte
 	wpos uint
-	rds  []*circularReader
+	rds  *list.List
 	l    sync.Cond
 	m    sync.Mutex
 }
 
 type circularReader struct {
+	err  error
 	cbuf *circularBuffer
+	el   *list.Element
 	rpos uint
 }
 
@@ -59,6 +64,7 @@ func NewCircularWriterSize(size int) *circularBuffer {
 		wpos: 0,
 	}
 	b.l.L = &b.m
+	b.rds = list.New()
 	return b
 }
 
@@ -84,11 +90,11 @@ func (b *circularBuffer) pos() int {
 func (b *circularBuffer) Write(p []byte) (n int, err error) {
 
 	n = 0
-	s := len(p)
-
-	// Optimization if the source is bigger than the destination
-	if b.pos()+len(p) > len(b.buf) {
-		n = len(p) - len(b.buf)
+	s := 0
+	if len(p) < len(b.buf) {
+		s = len(p)
+	} else {
+		s = len(b.buf)
 	}
 
 	// Copy the data
@@ -99,19 +105,14 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 	b.wpos += uint(n)
 
 	// Update the readers' pointers
-	for _, r := range b.rds {
-
-		// TODO: Bug if wraps n * 2 times.
-		// probably because of the optimization.
-
+	for e := b.rds.Front(); e != nil; e = e.Next() {
 		// If the write pointer wrapped
-		if b.wrapped() != r.wrapped() && r.pos() < b.pos() {
+		r, ok := e.Value.(circularReader)
+		if ok && b.wrapped() != r.wrapped() && r.pos() < b.pos() {
 			r.rpos += uint(b.pos() - r.pos())
 		}
-
 	}
 
-	//log.Printf("writen: %d", n)
 	b.l.L.Lock()
 	b.l.Broadcast()
 
@@ -121,8 +122,6 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 
 	b.l.L.Unlock()
 
-	log.Printf("writen: %d", n)
-
 	return
 }
 
@@ -131,8 +130,14 @@ func (b *circularBuffer) NewReader() *circularReader {
 		cbuf: b,
 		rpos: b.wpos,
 	}
-	b.rds = append(b.rds, rd)
+	rd.el = b.rds.PushFront(&rd)
 	return rd
+}
+
+func (r *circularReader) Close() error {
+	r.cbuf.rds.Remove(r.el)
+	r.err = errors.New("the reader has been closed")
+	return nil
 }
 
 func (r *circularReader) wrapped() bool {
@@ -147,16 +152,17 @@ func (r *circularReader) pos() int {
 
 func (r *circularReader) Read(p []byte) (n int, err error) {
 
+	if r.err != nil {
+		return 0, r.err
+	}
+
 	n = 0
 
 	// Wait for data
 	r.cbuf.l.L.Lock()
-	//last := r
-	//for r.wrapped() == r.cbuf.wrapped() && r.pos() == r.cbuf.pos() {
-	log.Println("wait")
-	r.cbuf.l.Wait()
-	log.Println("wake up")
-	//}
+	for r.wrapped() == r.cbuf.wrapped() && r.pos() == r.cbuf.pos() {
+		r.cbuf.l.Wait()
+	}
 	r.cbuf.l.L.Unlock()
 
 	// Loop until both pointers are equal and in the same state.
@@ -170,8 +176,6 @@ func (r *circularReader) Read(p []byte) (n int, err error) {
 		n += a
 		r.rpos += uint(a)
 	}
-
-	log.Printf("Read: %d", n)
 
 	return
 }
