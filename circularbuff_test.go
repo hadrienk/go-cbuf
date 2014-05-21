@@ -51,50 +51,52 @@ func Test_pos(t *testing.T) {
 	}
 }
 
-func Test_WriterSimpleWraps(t *testing.T) {
+func Test_WriterWraps(t *testing.T) {
 
 	var n int
 
 	cb := NewCircularWriterSize(8)
 	r := cb.NewReader()
-	buf := make([]byte, 16)
+	buf := make([]byte, 12)
 
-	val := []byte("0123456789")
-	n, _ = cb.Write(val)
+	val := []byte("1234")
 
-	if n != len(cb.buf) {
-		t.Errorf("Could't write all bytes. %d writen, wanted %d", n, len(val))
-	}
-
-	n, _ = r.Read(buf)
-
-	if string(buf[:n]) != "01234567" { //string(val[len(val)-n:]) {
-		t.Errorf("Buffer received %q, wanted %q", string(buf), "01234567")
-	}
-
-}
-
-func Test_WriterComplexWraps(t *testing.T) {
-
-	var n int
-
-	cb := NewCircularWriterSize(16)
-	r := cb.NewReader()
-	buf := make([]byte, 20)
-
-	t.Logf("%b, %d", 7&^len(make([]byte, 16)), 7&^len(make([]byte, 16)))
-
-	val := []byte("0000000")
-
+	// Will write everything.
 	n, _ = cb.Write(val)
 	if n != len(val) {
 		t.Errorf("Could't write all bytes. %d writen, wanted %d", n, len(val))
 	}
 
-	n, _ = r.Read(buf)
+	if cb.wpos != uint(len(val)) {
+		t.Errorf("Write pointer incorrect. Got %d, wanted %d", cb.wpos, len(val))
+	}
 
+	// Shoul read all.
+	n, _ = r.Read(buf)
 	if string(buf[:n]) != string(val) {
-		t.Errorf("Buffer received %q, wanted %q", string(buf), val)
+		t.Errorf("Buffer received %q, wanted %q", string(buf[:n]), val)
+	}
+
+	val2 := []byte("56789a")
+
+	// This should wrap.
+	n, _ = cb.Write(val2)
+	if n != len(val2) {
+		t.Errorf("Could't write all bytes. %d writen, wanted %d", n, len(val2))
+	}
+
+	if cb.wpos != uint(len(val)+len(val2)) {
+		t.Errorf("Write pointer incorrect. Got %d, wanted %d", cb.wpos, len(val)+len(val2))
+	}
+
+	if !cb.wrapped() {
+		t.Errorf("Buffer should have wrapped. %t received, wanted %t", cb.wrapped(), true)
+	}
+
+	// Shoul read all.
+	n, _ = r.Read(buf)
+	if string(buf[:n]) != string(val2) {
+		t.Errorf("Buffer received %q, wanted %q", string(buf[:n]), val2)
 	}
 
 }

@@ -22,7 +22,7 @@ type circularBuffer struct {
 	wpos uint
 	rds  *list.List
 	l    sync.Cond
-	m    sync.Mutex
+	m    sync.RWMutex
 }
 
 type circularReader struct {
@@ -88,21 +88,29 @@ func (b *circularBuffer) pos() int {
 }
 
 func (b *circularBuffer) Write(p []byte) (n int, err error) {
+	// Returns the number of bytes written from p (0 <= n <= len(p))
+	// Write must return a non-nil error if it returns n < len(p).
 
 	n = 0
+
 	s := 0
-	if len(p) < len(b.buf) {
-		s = len(p)
-	} else {
+
+	if len(p) > len(b.buf) {
 		s = len(b.buf)
+	} else {
+		s = len(p)
 	}
 
-	// Copy the data
+	// Copy the data until we reached the lenght of the
+	// provided buffer.
 	for n < s {
-		n += copy(b.buf[b.pos():], p[n:])
+		written := copy(b.buf[b.pos():], p[n:])
+		n += written
+		b.wpos += uint(written)
 	}
 
-	b.wpos += uint(n)
+	// Lock the RWMutex to update readers positions.
+	b.m.Lock()
 
 	// Update the readers' pointers
 	for e := b.rds.Front(); e != nil; e = e.Next() {
@@ -113,14 +121,14 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 		}
 	}
 
-	b.l.L.Lock()
+	// Signal the change.
 	b.l.Broadcast()
 
 	// Allow other threads to execute in a single core
 	// environement.
 	runtime.Gosched()
 
-	b.l.L.Unlock()
+	b.m.Unlock()
 
 	return
 }
@@ -155,27 +163,34 @@ func (r *circularReader) Read(p []byte) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
 	}
+	if len(p) == 0 {
+		return 0, r.err
+	}
 
 	n = 0
 
 	// Wait for data
-	r.cbuf.l.L.Lock()
+	r.cbuf.m.RLock()
 	for r.wrapped() == r.cbuf.wrapped() && r.pos() == r.cbuf.pos() {
 		r.cbuf.l.Wait()
 	}
-	r.cbuf.l.L.Unlock()
 
 	// Loop until both pointers are equal and in the same state.
 	for r.wrapped() != r.cbuf.wrapped() || r.pos() != r.cbuf.pos() {
 		var a int
 		if r.wrapped() == r.cbuf.wrapped() {
-			a += copy(p, r.cbuf.buf[r.pos():r.cbuf.pos()])
+			a += copy(p[n:], r.cbuf.buf[r.pos():r.cbuf.pos()])
 		} else {
-			a += copy(p[r.cbuf.pos():], r.cbuf.buf[r.pos():])
+			a += copy(p[n:], r.cbuf.buf[r.pos():])
 		}
 		n += a
 		r.rpos += uint(a)
+		if n == len(p) {
+			break
+		}
 	}
+
+	r.cbuf.m.RUnlock()
 
 	return
 }
