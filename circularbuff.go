@@ -83,7 +83,7 @@ func (b *circularBuffer) wrapped() bool {
 }
 
 func (b *circularBuffer) pos() int {
-	// Return only the uint value of the buffer lenght value.
+	// Return only a uint value within the buffer's length.
 	return pos(b.wpos, uint(len(b.buf)))
 }
 
@@ -91,22 +91,21 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 	// Returns the number of bytes written from p (0 <= n <= len(p))
 	// Write must return a non-nil error if it returns n < len(p).
 
-	n = 0
-
-	s := 0
 
 	if len(p) > len(b.buf) {
-		s = len(b.buf)
-	} else {
-		s = len(p)
+		// Cannot write more that the buffer's
+		// size
+		p = p[:len(b.buf)]
+		err = errors.New("Too much data, truncating.")
 	}
 
-	// Copy the data until we reached the lenght of the
-	// provided buffer.
-	for n < s {
-		written := copy(b.buf[b.pos():], p[n:])
-		n += written
-		b.wpos += uint(written)
+	// Copy the data
+	w := 1
+	for w > 0 && len(p) > 0 {
+		w = copy(b.buf[b.pos():], p[:])
+		b.wpos += uint(w)
+		n += w
+		p = p[w:]
 	}
 
 	// Lock the RWMutex to update readers positions.
@@ -167,13 +166,13 @@ func (r *circularReader) Read(p []byte) (n int, err error) {
 		return 0, r.err
 	}
 
-	n = 0
-
+	r.cbuf.l.L.Lock()
 	// Wait for data
-	r.cbuf.m.RLock()
 	for r.wrapped() == r.cbuf.wrapped() && r.pos() == r.cbuf.pos() {
 		r.cbuf.l.Wait()
 	}
+	r.cbuf.l.L.Unlock()
+
 
 	// Loop until both pointers are equal and in the same state.
 	for r.wrapped() != r.cbuf.wrapped() || r.pos() != r.cbuf.pos() {
