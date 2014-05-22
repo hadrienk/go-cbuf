@@ -63,7 +63,7 @@ func NewCircularWriterSize(size int) *circularBuffer {
 		buf:  make([]byte, size),
 		wpos: 0,
 	}
-	b.l.L = &b.m
+	b.l.L = &sync.Mutex{}
 	b.rds = list.New()
 	return b
 }
@@ -91,6 +91,9 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 	// Returns the number of bytes written from p (0 <= n <= len(p))
 	// Write must return a non-nil error if it returns n < len(p).
 
+	// Lock the RWMutex to update readers positions.
+	b.m.Lock()
+	defer b.m.Unlock()
 
 	if len(p) > len(b.buf) {
 		// Cannot write more that the buffer's
@@ -108,9 +111,6 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 		p = p[w:]
 	}
 
-	// Lock the RWMutex to update readers positions.
-	b.m.Lock()
-
 	// Update the readers' pointers
 	for e := b.rds.Front(); e != nil; e = e.Next() {
 		// If the write pointer wrapped
@@ -126,8 +126,6 @@ func (b *circularBuffer) Write(p []byte) (n int, err error) {
 	// Allow other threads to execute in a single core
 	// environement.
 	runtime.Gosched()
-
-	b.m.Unlock()
 
 	return
 }
@@ -173,6 +171,11 @@ func (r *circularReader) Read(p []byte) (n int, err error) {
 	}
 	r.cbuf.l.L.Unlock()
 
+	// Lock for reading.
+	r.cbuf.m.RLock()
+	defer r.cbuf.m.RUnlock()
+
+	//log.Printf("buffer is %s", string(r.cbuf.buf))
 
 	// Loop until both pointers are equal and in the same state.
 	for r.wrapped() != r.cbuf.wrapped() || r.pos() != r.cbuf.pos() {
@@ -188,8 +191,6 @@ func (r *circularReader) Read(p []byte) (n int, err error) {
 			break
 		}
 	}
-
-	r.cbuf.m.RUnlock()
 
 	return
 }
