@@ -36,7 +36,10 @@ type CircularBuffer interface {
 	NewReader() *circularReader
 }
 
-type CircularReader interface{}
+type CircularReader interface{
+	Close() error
+	Read(p []byte) (n int, err error)
+}
 
 // Creates a new CircularWriter with the default buffer size.
 func NewCircularWriter() *circularBuffer {
